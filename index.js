@@ -17,7 +17,7 @@ async function sendTelegramMessage(text) {
       parse_mode: 'Markdown'
     });
   } catch (err) {
-    console.error('Erro enviando mensagem para Telegram:', err.message);
+    console.error('Erro ao enviar mensagem para o Telegram:', err.message);
   }
 }
 
@@ -237,76 +237,72 @@ async function checarAlertas(symbol, alertHistory) {
 
   if (signalBuy && (!lastAlert.buy || now - lastAlert.buy > 15 * 60 * 1000)) {
     if (!atr30m) {
-      console.log(`Sem ATR para calcular SL/TP de BUY em ${symbol}`);
+      console.log(`Sem ATR para calcular SL/TP de COMPRA em ${symbol}`);
       return;
     }
 
     const { stopLoss, takeProfit } = calculateSLTP(precoAtual, atr30m, 'buy');
 
     const msg = `🚀 *Compra* detectada para ${symbol}!\n` +
-      `Entrada: ${precoAtual.toFixed(2)}\n` +
-      `Stop Loss: ${stopLoss.toFixed(2)}\n` +
-      `Take Profit: ${takeProfit.toFixed(2)}\n` +
-      `Score: ${scoreBuy}\n` +
-      `Indicadores: RSI(5m): ${rsi5m.toFixed(1)}, MACD(30m): ${macd30m.MACD.toFixed(2)} > ${macd30m.signal.toFixed(2)}, ADX(30m): ${adx30m.toFixed(1)}`;
+      `Entrada: ${precoAtual.toFixed(4)}\n` +
+      `Stop Loss: ${stopLoss.toFixed(4)}\n` +
+      `Take Profit: ${takeProfit.toFixed(4)}\n` +
+      `RSI5m: ${rsi5m.toFixed(2)}\n` +
+      `MACD30m: ${macd30m.MACD.toFixed(4)} > ${macd30m.signal.toFixed(4)}\n` +
+      `ADX30m: ${adx30m.toFixed(2)}`;
 
-    console.log(`Enviando ALERTA DE COMPRA para ${symbol} (score ${scoreBuy})`);
     await sendTelegramMessage(msg);
-    alertHistory[symbol].buy = now;
+
+    alertHistory[symbol] = { buy: now, sell: lastAlert.sell };
     await saveAlertHistory(alertHistory);
-  } else {
-    if (signalBuy) {
-      console.log(`Alerta de compra para ${symbol} já enviado recentemente.`);
-    }
   }
 
   if (signalSell && (!lastAlert.sell || now - lastAlert.sell > 15 * 60 * 1000)) {
     if (!atr30m) {
-      console.log(`Sem ATR para calcular SL/TP de SELL em ${symbol}`);
+      console.log(`Sem ATR para calcular SL/TP de VENDA em ${symbol}`);
       return;
     }
 
     const { stopLoss, takeProfit } = calculateSLTP(precoAtual, atr30m, 'sell');
 
-    const msg = `⚠️ *Venda* detectada para ${symbol}!\n` +
-      `Entrada: ${precoAtual.toFixed(2)}\n` +
-      `Stop Loss: ${stopLoss.toFixed(2)}\n` +
-      `Take Profit: ${takeProfit.toFixed(2)}\n` +
-      `Score: ${scoreSell}\n` +
-      `Indicadores: RSI(5m): ${rsi5m.toFixed(1)}, MACD(30m): ${macd30m.MACD.toFixed(2)} < ${macd30m.signal.toFixed(2)}, ADX(30m): ${adx30m.toFixed(1)}`;
+    const msg = `⛔ *Venda* detectada para ${symbol}!\n` +
+      `Entrada: ${precoAtual.toFixed(4)}\n` +
+      `Stop Loss: ${stopLoss.toFixed(4)}\n` +
+      `Take Profit: ${takeProfit.toFixed(4)}\n` +
+      `RSI5m: ${rsi5m.toFixed(2)}\n` +
+      `MACD30m: ${macd30m.MACD.toFixed(4)} < ${macd30m.signal.toFixed(4)}\n` +
+      `ADX30m: ${adx30m.toFixed(2)}`;
 
-    console.log(`Enviando ALERTA DE VENDA para ${symbol} (score ${scoreSell})`);
     await sendTelegramMessage(msg);
-    alertHistory[symbol].sell = now;
+
+    alertHistory[symbol] = { buy: lastAlert.buy, sell: now };
     await saveAlertHistory(alertHistory);
-  } else {
-    if (signalSell) {
-      console.log(`Alerta de venda para ${symbol} já enviado recentemente.`);
-    }
   }
 }
 
 // --- LOOP PRINCIPAL ---
 async function loopPrincipal() {
+  const agora = new Date();
+  console.log(`\nA verificar sinais em ${agora.toLocaleString('pt-PT')}`);
+
   const alertHistory = await loadAlertHistory();
 
-  for (const s of symbols) {
-    if (!alertHistory[s]) {
-      alertHistory[s] = {};
+  for (const symbol of symbols) {
+    try {
+      await checarAlertas(symbol, alertHistory);
+    } catch (err) {
+      console.error(`Erro ao verificar ${symbol}:`, err.message);
     }
   }
-
-  setInterval(async () => {
-    console.log(`\nChecando sinais em ${new Date().toLocaleString()}`);
-
-    for (const symbol of symbols) {
-      try {
-        await checarAlertas(symbol, alertHistory);
-      } catch (e) {
-        console.error(`Erro ao checar ${symbol}:`, e.message);
-      }
-    }
-  }, 60 * 1000); // roda a cada 1 minuto
 }
 
-loopPrincipal();
+// --- INICIO ---
+async function main() {
+  while (true) {
+    await loopPrincipal();
+    // Aguarda 4 minutos para o próximo ciclo
+    await new Promise(resolve => setTimeout(resolve, 4 * 60 * 1000));
+  }
+}
+
+main();
