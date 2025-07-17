@@ -1,0 +1,16 @@
+# Ignorar a pasta de dependências
+node_modules/
+
+# Ignorar arquivos de ambiente com senhas ou tokens
+.env
+
+# Ignorar arquivo de histórico de alertas (se não quiser subir)
+alertHistory.json
+
+# Logs
+logs/
+*.log
+
+# Pastas do sistema e arquivos temporários
+.DS_Store
+Thumbs.db
