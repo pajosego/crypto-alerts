@@ -4,7 +4,8 @@
   "description": "Bot de alertas para criptomoedas com indicadores técnicos e Telegram",
   "main": "index.js",
   "scripts": {
-    "start": "node index.js"
+    "start": "node index.js",
+    "post-deploy": "echo 'Deploy concluído!'"
   },
   "author": "Seu Nome",
   "license": "MIT",
