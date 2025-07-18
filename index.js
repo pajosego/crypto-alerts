@@ -1,16 +1,22 @@
 const axios = require('axios');
-const ti = require('technicalindicators');
 const fs = require('fs').promises;
 const path = require('path');
 
 const TELEGRAM_BOT_TOKEN = '7818490459:AAG-p7pp4FGVqRcFcT9QoTF8o9vVsKl_VpM';
 const TELEGRAM_CHAT_ID = '1741928134';
 
-const symbols = [/*...seus símbolos...*/];
+const symbols = [
+  'BTCUSDT', 'ETHUSDT', 'BNBUSDT', 'XRPUSDT', 'ADAUSDT',
+  'SOLUSDT', 'DOGEUSDT', 'DOTUSDT', 'LTCUSDT',
+  'AVAXUSDT', 'MATICUSDT', 'LINKUSDT'
+];
+
 const ALERT_COOLDOWN_MS = 30 * 60 * 1000; // 30 minutos
+const CHECK_INTERVAL_MS = 4 * 60 * 1000; // 4 minutos
 
 const alertHistoryFile = path.resolve(__dirname, 'alertHistory.json');
 
+// Envia mensagem para o Telegram
 async function sendTelegramMessage(text) {
   const url = `https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage`;
   try {
@@ -20,10 +26,11 @@ async function sendTelegramMessage(text) {
       parse_mode: 'Markdown'
     });
   } catch (err) {
-    console.error('Erro ao enviar Telegram:', err.message);
+    console.error('❌ Erro ao enviar Telegram:', err.message);
   }
 }
 
+// Carrega histórico de alertas
 async function loadAlertHistory() {
   try {
     const data = await fs.readFile(alertHistoryFile, 'utf-8');
@@ -33,61 +40,75 @@ async function loadAlertHistory() {
   }
 }
 
+// Salva histórico atualizado
 async function saveAlertHistory(history) {
   try {
     await fs.writeFile(alertHistoryFile, JSON.stringify(history, null, 2));
   } catch (e) {
-    console.error('Erro ao salvar alertHistory:', e.message);
+    console.error('❌ Erro ao salvar alertHistory:', e.message);
   }
 }
 
-async function checarAlertas(symbol, alertHistory) {
-  // ... seu cálculo do scoreBuy e scoreSell
+// Simula verificação de sinais e retorna score fictício
+function analisarIndicadores(symbol) {
+  // TODO: Substituir com lógica real
+  const scoreBuy = Math.random() * 5;
+  const scoreSell = Math.random() * 5;
+  return { scoreBuy, scoreSell };
+}
 
+// Avalia sinais e envia alertas com cooldown
+async function checarAlertas(symbol, alertHistory) {
+  const { scoreBuy, scoreSell } = analisarIndicadores(symbol);
   const now = Date.now();
 
-  // Assegura que o objeto existe
   if (!alertHistory[symbol]) {
     alertHistory[symbol] = { buy: 0, sell: 0 };
   }
 
-  // Verifica cooldown para compra
+  // Sinal de compra
   if (scoreBuy >= 2.5) {
-    const lastBuy = alertHistory[symbol].buy || 0;
-    if ((now - lastBuy) > ALERT_COOLDOWN_MS) {
-      // Envia alerta compra
-      await sendTelegramMessage(`🚀 Compra detectada para ${symbol} ...`);
+    if ((now - alertHistory[symbol].buy) > ALERT_COOLDOWN_MS) {
+      await sendTelegramMessage(`🚀 *Compra* detectada para ${symbol}!\nScore: ${scoreBuy.toFixed(2)}`);
       alertHistory[symbol].buy = now;
       await saveAlertHistory(alertHistory);
     } else {
-      console.log(`Alerta compra para ${symbol} ignorado (cooldown).`);
+      console.log(`[${symbol}] Compra ignorada (cooldown ativo).`);
     }
   }
 
-  // Verifica cooldown para venda
+  // Sinal de venda
   if (scoreSell >= 2.5) {
-    const lastSell = alertHistory[symbol].sell || 0;
-    if ((now - lastSell) > ALERT_COOLDOWN_MS) {
-      // Envia alerta venda
-      await sendTelegramMessage(`🛑 Venda detectada para ${symbol} ...`);
+    if ((now - alertHistory[symbol].sell) > ALERT_COOLDOWN_MS) {
+      await sendTelegramMessage(`🛑 *Venda* detectada para ${symbol}!\nScore: ${scoreSell.toFixed(2)}`);
       alertHistory[symbol].sell = now;
       await saveAlertHistory(alertHistory);
     } else {
-      console.log(`Alerta venda para ${symbol} ignorado (cooldown).`);
+      console.log(`[${symbol}] Venda ignorada (cooldown ativo).`);
     }
   }
+
+  console.log(`[${new Date().toLocaleTimeString()}] ${symbol} -> Score Compra: ${scoreBuy.toFixed(2)}, Score Venda: ${scoreSell.toFixed(2)}`);
 }
 
+// Loop principal
 (async () => {
-  const alertHistory = await loadAlertHistory();
+  try {
+    console.log('🚀 Iniciando monitoramento...');
+    const alertHistory = await loadAlertHistory();
 
-  setInterval(async () => {
-    for (const symbol of symbols) {
-      try {
-        await checarAlertas(symbol, alertHistory);
-      } catch (e) {
-        console.error(`Erro em ${symbol}:`, e.message);
+    setInterval(async () => {
+      console.log(`\n⏱ A verificar sinais em ${new Date().toLocaleString('pt-PT')}`);
+      for (const symbol of symbols) {
+        try {
+          await checarAlertas(symbol, alertHistory);
+        } catch (err) {
+          console.error(`Erro ao verificar ${symbol}:`, err.message);
+        }
       }
-    }
-  }, 60 * 1000);
+    }, CHECK_INTERVAL_MS);
+
+  } catch (err) {
+    console.error('❌ Erro ao iniciar o bot:', err.message);
+  }
 })();
