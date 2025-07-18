@@ -24,13 +24,36 @@ const INTERVALS = {
 const API_URL = "https://api.binance.com/api/v3/klines";
 
 const ALERT_SCORE_THRESHOLD = 3.5;
-const ALERT_COOLDOWN = 30 * 60 * 1000; // 30 minutos
+const ALERT_COOLDOWN = 30 * 60 * 1000; // 30 min
 
 const lastAlerts = {};
 
-// Função para arredondar números para 6 casas decimais
-function round6(num) {
-  return +num.toFixed(6);
+// Função para arredondar valores para 6 casas decimais
+function round6(value) {
+  return +(value.toFixed(6));
+}
+
+// Agora canSendAlert também considera entry, sl, tp para evitar alertas repetidos com valores "quase iguais"
+function canSendAlert(symbol, tipo, entry, sl, tp) {
+  const now = Date.now();
+  if (!lastAlerts[symbol]) lastAlerts[symbol] = {};
+  
+  // Cria uma chave combinada com valores para evitar alertas iguais repetidos
+  const alertKey = `${tipo}_${entry}_${sl}_${tp}`;
+
+  if (!lastAlerts[symbol][alertKey] || now - lastAlerts[symbol][alertKey] > ALERT_COOLDOWN) {
+    lastAlerts[symbol][alertKey] = now;
+    return true;
+  }
+  return false;
+}
+
+function calculateTP(entry, atr, factor = 1.5) {
+  return +(entry + factor * atr);
+}
+
+function calculateSL(entry, atr, factor = 1) {
+  return +(entry - factor * atr);
 }
 
 async function fetchCandles(symbol, interval, limit = 100) {
@@ -42,36 +65,6 @@ async function fetchCandles(symbol, interval, limit = 100) {
     low: parseFloat(c[3]),
     close: parseFloat(c[4])
   }));
-}
-
-function canSendAlert(symbol, tipo, entry, sl, tp) {
-  const now = Date.now();
-  if (!lastAlerts[symbol]) lastAlerts[symbol] = {};
-
-  entry = round6(entry);
-  sl = round6(sl);
-  tp = round6(tp);
-
-  const last = lastAlerts[symbol][tipo];
-
-  const changed = !last ||
-    last.entry !== entry ||
-    last.sl !== sl ||
-    last.tp !== tp;
-
-  if (changed && (!last || now - last.timestamp > ALERT_COOLDOWN)) {
-    lastAlerts[symbol][tipo] = { timestamp: now, entry, sl, tp };
-    return true;
-  }
-  return false;
-}
-
-function calculateTP(entry, atr, factor = 1.5) {
-  return +(entry + factor * atr).toFixed(6);
-}
-
-function calculateSL(entry, atr, factor = 1) {
-  return +(entry - factor * atr).toFixed(6);
 }
 
 async function analyzeSymbol(symbol) {
@@ -150,8 +143,8 @@ async function analyzeSymbol(symbol) {
       }
     } else if (scoreVenda >= ALERT_SCORE_THRESHOLD) {
       const entry = round6(closePrice);
-      const tp = round6(calculateTP(entry, lastATR));
       const sl = round6(calculateSL(entry, lastATR));
+      const tp = round6(calculateTP(entry, lastATR));
       if (canSendAlert(symbol, "venda", entry, sl, tp)) {
         sendTelegramAlert(symbol, "venda", entry, sl, tp, lastRSI, lastMACD, lastADX, scoreVenda);
       }
@@ -186,7 +179,7 @@ async function monitorar() {
   console.log("Monitoramento concluído.");
 }
 
-setInterval(monitorar, 10 * 60 * 1000); // A cada 10 minutos
+setInterval(monitorar, 10 * 60 * 1000);
 monitorar();
 
 // Evita encerramento automático no Railway
