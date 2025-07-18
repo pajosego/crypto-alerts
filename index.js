@@ -62,14 +62,6 @@ function calcRSI(closes, period = 14) {
   return ti.RSI.calculate({ period, values: closes });
 }
 
-function calcSMA(closes, period) {
-  return ti.SMA.calculate({ period, values: closes });
-}
-
-function calcEMA(closes, period) {
-  return ti.EMA.calculate({ period, values: closes });
-}
-
 function calcMACD(closes) {
   return ti.MACD.calculate({
     values: closes,
@@ -79,10 +71,6 @@ function calcMACD(closes) {
     SimpleMAOscillator: false,
     SimpleMASignal: false
   });
-}
-
-function calcBollingerBands(closes, period = 20, stdDev = 2) {
-  return ti.BollingerBands.calculate({ period, stdDev, values: closes });
 }
 
 function calcADX(highs, lows, closes, period = 14) {
@@ -137,8 +125,6 @@ async function checarAlertas(symbol, alertHistory) {
   const lows30m = tf30m.map(c => c.low);
 
   const closes4h = tf4h.map(c => c.close);
-  const highs4h = tf4h.map(c => c.high);
-  const lows4h = tf4h.map(c => c.low);
 
   const precoAtual = tfAtual[0].close;
   const ontem = tf1d[tf1d.length - 2];
@@ -193,7 +179,12 @@ async function checarAlertas(symbol, alertHistory) {
   const atr30m = atr30mArr.length ? atr30mArr[atr30mArr.length - 1] : null;
 
   const now = Date.now();
-  const lastAlert = alertHistory[symbol] || {};
+
+  // GARANTIR OBJETO PADRÃO PARA ALERTAS DO SÍMBOLO
+  if (!alertHistory[symbol]) {
+    alertHistory[symbol] = { buy: 0, sell: 0 };
+  }
+  const lastAlert = alertHistory[symbol];
 
   // Debug alert times
   console.log(`${symbol} - Últimos alertas: buy=${lastAlert.buy}, sell=${lastAlert.sell}`);
