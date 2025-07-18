@@ -4,9 +4,8 @@ const fs = require('fs').promises;
 const path = require('path');
 
 // --- CONFIGURAÇÕES ---
-// Substitua com o token do seu bot Telegram e o chat ID
-const TELEGRAM_BOT_TOKEN = 'COLOQUE_AQUI_SEU_TOKEN';
-const TELEGRAM_CHAT_ID = 'COLOQUE_AQUI_SEU_CHAT_ID';
+const TELEGRAM_BOT_TOKEN = '7818490459:AAG-p7pp4FGVqRcFcT9QoTF8o9vVsKl_VpM';
+const TELEGRAM_CHAT_ID = '1741928134';
 
 async function sendTelegramMessage(text) {
   const url = `https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage`;
@@ -21,7 +20,6 @@ async function sendTelegramMessage(text) {
   }
 }
 
-// --- CONFIGURAÇÕES DE MONITORAMENTO ---
 const symbols = [
   'BTCUSDT', 'ETHUSDT', 'BNBUSDT', 'XRPUSDT', 'ADAUSDT',
   'SOLUSDT', 'DOGEUSDT', 'DOTUSDT', 'LTCUSDT', 'AVAXUSDT',
@@ -29,13 +27,12 @@ const symbols = [
 ];
 
 const candleCache = {};
-const cacheDurationMs = 4 * 60 * 1000; // 4 minutos
+const cacheDurationMs = 4 * 60 * 1000;
 const alertHistoryFile = path.resolve(__dirname, 'alertHistory.json');
 
-const RISK_PERCENT = 1; // 1% por operação
-const CAPITAL = 10000; // Capital fictício para cálculo (ajuste conforme)
+const RISK_PERCENT = 1;
+const CAPITAL = 10000;
 
-// --- FUNÇÕES DE CACHE DE CANDLES ---
 async function getCandlesCached(symbol, interval, limit = 100) {
   const key = `${symbol}-${interval}-${limit}`;
   const now = Date.now();
@@ -63,7 +60,6 @@ async function getCandlesCached(symbol, interval, limit = 100) {
   return candles;
 }
 
-// --- INDICADORES ---
 function calcRSI(closes, period = 14) {
   return ti.RSI.calculate({ period, values: closes });
 }
@@ -95,13 +91,11 @@ function calcADX(highs, lows, closes, period = 14) {
   return ti.ADX.calculate({ high: highs, low: lows, close: closes, period });
 }
 
-// --- AJUDA COM CONFIRMAÇÃO DE SINAIS ---
 function checkSustainedCondition(arr, n, conditionFn) {
   if (arr.length < n) return false;
   return arr.slice(-n).every(conditionFn);
 }
 
-// --- HISTÓRICO DE ALERTAS ---
 async function loadAlertHistory() {
   try {
     const data = await fs.readFile(alertHistoryFile, 'utf-8');
@@ -115,7 +109,6 @@ async function saveAlertHistory(history) {
   await fs.writeFile(alertHistoryFile, JSON.stringify(history, null, 2));
 }
 
-// --- CÁLCULO DE STOP LOSS E TAKE PROFIT ---
 function calculateSLTP(entryPrice, atr, direction) {
   const slDistance = atr * 1.5;
   const tpDistance = atr * 3;
@@ -133,7 +126,6 @@ function calculateSLTP(entryPrice, atr, direction) {
   }
 }
 
-// --- FUNÇÃO PRINCIPAL DE ALERTAS ---
 async function checarAlertas(symbol, alertHistory) {
   const [tf5m, tf30m, tf4h, tf1d, tfAtual] = await Promise.all([
     getCandlesCached(symbol, '5m'),
@@ -229,6 +221,9 @@ async function checarAlertas(symbol, alertHistory) {
     scoreSell += 1;
   }
 
+  // 🔍 Log dos scores
+  console.log(`Score ${symbol} -> Compra: ${scoreBuy}, Venda: ${scoreSell}`);
+
   const signalBuy = scoreBuy >= 3;
   const signalSell = scoreSell >= 3;
 
@@ -290,6 +285,8 @@ async function loopPrincipal() {
   for (const symbol of symbols) {
     try {
       await checarAlertas(symbol, alertHistory);
+      const hora = new Date().toLocaleTimeString('pt-PT');
+      console.log(`[${hora}] Verificado ${symbol}`);
     } catch (err) {
       console.error(`Erro ao verificar ${symbol}:`, err.message);
     }
@@ -300,7 +297,6 @@ async function loopPrincipal() {
 async function main() {
   while (true) {
     await loopPrincipal();
-    // Aguarda 4 minutos para o próximo ciclo
     await new Promise(resolve => setTimeout(resolve, 4 * 60 * 1000));
   }
 }
