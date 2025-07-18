@@ -1,114 +1,104 @@
-const axios = require('axios');
-const fs = require('fs').promises;
-const path = require('path');
+// index.js
+const axios = require("axios");
+const { RSI, MACD, ADX, EMA } = require("technicalindicators");
+const TelegramBot = require("node-telegram-bot-api");
 
-const TELEGRAM_BOT_TOKEN = '7818490459:AAG-p7pp4FGVqRcFcT9QoTF8o9vVsKl_VpM';
-const TELEGRAM_CHAT_ID = '1741928134';
+const TELEGRAM_TOKEN = "7818490459:AAG-p7pp4FGVqRcFcT9QoTF8o9vVsKl_VpM";
+const CHAT_ID = "1741928134";
+const bot = new TelegramBot(TELEGRAM_TOKEN);
 
-const symbols = [
-  'BTCUSDT', 'ETHUSDT', 'BNBUSDT', 'XRPUSDT', 'ADAUSDT',
-  'SOLUSDT', 'DOGEUSDT', 'DOTUSDT', 'LTCUSDT',
-  'AVAXUSDT', 'MATICUSDT', 'LINKUSDT'
+const SYMBOLS = [
+  "BTCUSDT", "ETHUSDT", "BNBUSDT", "XRPUSDT", "ADAUSDT",
+  "SOLUSDT", "DOGEUSDT", "DOTUSDT", "LTCUSDT",
+  "AVAXUSDT", "MATICUSDT", "LINKUSDT"
 ];
 
-const ALERT_COOLDOWN_MS = 30 * 60 * 1000; // 30 minutos
-const CHECK_INTERVAL_MS = 4 * 60 * 1000; // 4 minutos
+const INTERVALS = {
+  rsi: "5m",
+  macd: "30m",
+  adx: "30m",
+  ema: "4h"
+};
 
-const alertHistoryFile = path.resolve(__dirname, 'alertHistory.json');
+const API_URL = "https://api.binance.com/api/v3/klines";
 
-// Envia mensagem para o Telegram
-async function sendTelegramMessage(text) {
-  const url = `https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage`;
+async function fetchCandles(symbol, interval, limit = 100) {
+  const url = `${API_URL}?symbol=${symbol}&interval=${interval}&limit=${limit}`;
+  const res = await axios.get(url);
+  return res.data.map(candle => parseFloat(candle[4]));
+}
+
+function calculateTP(price, percent = 2.5) {
+  return +(price + (price * percent / 100)).toFixed(4);
+}
+
+function calculateSL(price, percent = 2.5) {
+  return +(price - (price * percent / 100)).toFixed(4);
+}
+
+async function analyzeSymbol(symbol) {
   try {
-    await axios.post(url, {
-      chat_id: TELEGRAM_CHAT_ID,
-      text,
-      parse_mode: 'Markdown'
+    const rsiPrices = await fetchCandles(symbol, INTERVALS.rsi);
+    const macdPrices = await fetchCandles(symbol, INTERVALS.macd);
+    const adxPrices = await fetchCandles(symbol, INTERVALS.adx);
+    const emaPrices = await fetchCandles(symbol, INTERVALS.ema);
+
+    const closePrice = rsiPrices[rsiPrices.length - 1];
+
+    const rsi = RSI.calculate({ period: 14, values: rsiPrices });
+    const macd = MACD.calculate({
+      values: macdPrices,
+      fastPeriod: 12,
+      slowPeriod: 26,
+      signalPeriod: 9,
+      SimpleMAOscillator: false,
+      SimpleMASignal: false
     });
-  } catch (err) {
-    console.error('❌ Erro ao enviar Telegram:', err.message);
-  }
-}
+    const adx = ADX.calculate({ close: adxPrices, high: adxPrices, low: adxPrices, period: 14 });
+    const ema = EMA.calculate({ period: 200, values: emaPrices });
 
-// Carrega histórico de alertas
-async function loadAlertHistory() {
-  try {
-    const data = await fs.readFile(alertHistoryFile, 'utf-8');
-    return JSON.parse(data);
-  } catch {
-    return {};
-  }
-}
+    const lastRSI = rsi[rsi.length - 1];
+    const lastMACD = macd[macd.length - 1];
+    const lastADX = adx[adx.length - 1];
+    const lastEMA = ema[ema.length - 1];
 
-// Salva histórico atualizado
-async function saveAlertHistory(history) {
-  try {
-    await fs.writeFile(alertHistoryFile, JSON.stringify(history, null, 2));
-  } catch (e) {
-    console.error('❌ Erro ao salvar alertHistory:', e.message);
-  }
-}
+    const entry = closePrice;
+    const stopLoss = calculateSL(entry);
+    const takeProfit = calculateTP(entry);
 
-// Simula verificação de sinais e retorna score fictício
-function analisarIndicadores(symbol) {
-  // TODO: Substituir com lógica real
-  const scoreBuy = Math.random() * 5;
-  const scoreSell = Math.random() * 5;
-  return { scoreBuy, scoreSell };
-}
+    const isUpTrend = entry > lastEMA;
+    const isDownTrend = entry < lastEMA;
 
-// Avalia sinais e envia alertas com cooldown
-async function checarAlertas(symbol, alertHistory) {
-  const { scoreBuy, scoreSell } = analisarIndicadores(symbol);
-  const now = Date.now();
+    const adxStrong = lastADX && lastADX.adx >= 25;
 
-  if (!alertHistory[symbol]) {
-    alertHistory[symbol] = { buy: 0, sell: 0 };
-  }
-
-  // Sinal de compra
-  if (scoreBuy >= 2.5) {
-    if ((now - alertHistory[symbol].buy) > ALERT_COOLDOWN_MS) {
-      await sendTelegramMessage(`🚀 *Compra* detectada para ${symbol}!\nScore: ${scoreBuy.toFixed(2)}`);
-      alertHistory[symbol].buy = now;
-      await saveAlertHistory(alertHistory);
-    } else {
-      console.log(`[${symbol}] Compra ignorada (cooldown ativo).`);
+    if (lastRSI < 30 && lastMACD.MACD > lastMACD.signal && isUpTrend && adxStrong) {
+      sendTelegramAlert(symbol, "compra", entry, stopLoss, takeProfit, lastRSI, lastMACD, lastADX);
+    } else if (lastRSI > 70 && lastMACD.MACD < lastMACD.signal && isDownTrend && adxStrong) {
+      sendTelegramAlert(symbol, "venda", entry, calculateTP(entry), calculateSL(entry), lastRSI, lastMACD, lastADX);
     }
+  } catch (err) {
+    console.error(`Erro ao analisar ${symbol}:`, err.message);
   }
-
-  // Sinal de venda
-  if (scoreSell >= 2.5) {
-    if ((now - alertHistory[symbol].sell) > ALERT_COOLDOWN_MS) {
-      await sendTelegramMessage(`🛑 *Venda* detectada para ${symbol}!\nScore: ${scoreSell.toFixed(2)}`);
-      alertHistory[symbol].sell = now;
-      await saveAlertHistory(alertHistory);
-    } else {
-      console.log(`[${symbol}] Venda ignorada (cooldown ativo).`);
-    }
-  }
-
-  console.log(`[${new Date().toLocaleTimeString()}] ${symbol} -> Score Compra: ${scoreBuy.toFixed(2)}, Score Venda: ${scoreSell.toFixed(2)}`);
 }
 
-// Loop principal
-(async () => {
-  try {
-    console.log('🚀 Iniciando monitoramento...');
-    const alertHistory = await loadAlertHistory();
+function sendTelegramAlert(symbol, tipo, entry, sl, tp, rsi, macd, adx) {
+  const emoji = tipo === "compra" ? "🚀" : "🛑";
+  const msg = `${emoji} ${tipo.charAt(0).toUpperCase() + tipo.slice(1)} detectada para ${symbol}!
+Entrada: ${entry}
+Stop Loss: ${sl}
+Take Profit: ${tp}
+RSI5m: ${rsi.toFixed(2)}
+MACD30m: ${macd.MACD.toFixed(4)} ${tipo === "compra" ? ">" : "<"} ${macd.signal.toFixed(4)}
+ADX30m: ${adx.adx.toFixed(2)}`;
+  bot.sendMessage(CHAT_ID, msg);
+  console.log(`[${new Date().toLocaleTimeString()}] Alerta enviado: ${symbol} (${tipo})`);
+}
 
-    setInterval(async () => {
-      console.log(`\n⏱ A verificar sinais em ${new Date().toLocaleString('pt-PT')}`);
-      for (const symbol of symbols) {
-        try {
-          await checarAlertas(symbol, alertHistory);
-        } catch (err) {
-          console.error(`Erro ao verificar ${symbol}:`, err.message);
-        }
-      }
-    }, CHECK_INTERVAL_MS);
-
-  } catch (err) {
-    console.error('❌ Erro ao iniciar o bot:', err.message);
+async function monitorar() {
+  console.log("Iniciando monitoramento...");
+  for (const symbol of SYMBOLS) {
+    await analyzeSymbol(symbol);
   }
-})();
+}
+
+setInterval(monitorar, 10 * 60 * 1000); // A cada 10 minutos
