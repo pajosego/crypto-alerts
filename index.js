@@ -28,6 +28,11 @@ const ALERT_COOLDOWN = 30 * 60 * 1000; // 30 minutos
 
 const lastAlerts = {};
 
+// Função para arredondar números para 6 casas decimais
+function round6(num) {
+  return +num.toFixed(6);
+}
+
 async function fetchCandles(symbol, interval, limit = 100) {
   const url = `${API_URL}?symbol=${symbol}&interval=${interval}&limit=${limit}`;
   const res = await axios.get(url);
@@ -43,7 +48,12 @@ function canSendAlert(symbol, tipo, entry, sl, tp) {
   const now = Date.now();
   if (!lastAlerts[symbol]) lastAlerts[symbol] = {};
 
+  entry = round6(entry);
+  sl = round6(sl);
+  tp = round6(tp);
+
   const last = lastAlerts[symbol][tipo];
+
   const changed = !last ||
     last.entry !== entry ||
     last.sl !== sl ||
@@ -132,22 +142,18 @@ async function analyzeSymbol(symbol) {
     if (adxStrong) scoreVenda += 1;
 
     if (scoreCompra >= ALERT_SCORE_THRESHOLD) {
-      const entry = closePrice;
-      const sl = calculateSL(entry, lastATR);
-      const tp = calculateTP(entry, lastATR);
+      const entry = round6(closePrice);
+      const sl = round6(calculateSL(entry, lastATR));
+      const tp = round6(calculateTP(entry, lastATR));
       if (canSendAlert(symbol, "compra", entry, sl, tp)) {
         sendTelegramAlert(symbol, "compra", entry, sl, tp, lastRSI, lastMACD, lastADX, scoreCompra);
-      } else {
-        console.log(`[${symbol}] Alerta COMPRA bloqueado pelo cooldown.`);
       }
     } else if (scoreVenda >= ALERT_SCORE_THRESHOLD) {
-      const entry = closePrice;
-      const tp = calculateSL(entry, lastATR); // invertido para venda
-      const sl = calculateTP(entry, lastATR);
+      const entry = round6(closePrice);
+      const tp = round6(calculateTP(entry, lastATR));
+      const sl = round6(calculateSL(entry, lastATR));
       if (canSendAlert(symbol, "venda", entry, sl, tp)) {
         sendTelegramAlert(symbol, "venda", entry, sl, tp, lastRSI, lastMACD, lastADX, scoreVenda);
-      } else {
-        console.log(`[${symbol}] Alerta VENDA bloqueado pelo cooldown.`);
       }
     } else {
       console.log(`[${symbol}] Nenhum sinal forte. Scores: Compra=${scoreCompra.toFixed(2)}, Venda=${scoreVenda.toFixed(2)}`);
@@ -180,7 +186,7 @@ async function monitorar() {
   console.log("Monitoramento concluído.");
 }
 
-setInterval(monitorar, 10 * 60 * 1000);
+setInterval(monitorar, 10 * 60 * 1000); // A cada 10 minutos
 monitorar();
 
 // Evita encerramento automático no Railway
