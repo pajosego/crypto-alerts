@@ -20,6 +20,7 @@ async function sendTelegramMessage(text) {
   }
 }
 
+// --- CONFIGURAÇÕES DE MONITORAMENTO ---
 const symbols = [
   'BTCUSDT', 'ETHUSDT', 'BNBUSDT', 'XRPUSDT', 'ADAUSDT',
   'SOLUSDT', 'DOGEUSDT', 'DOTUSDT', 'LTCUSDT', 'AVAXUSDT',
@@ -27,12 +28,13 @@ const symbols = [
 ];
 
 const candleCache = {};
-const cacheDurationMs = 4 * 60 * 1000;
+const cacheDurationMs = 4 * 60 * 1000; // 4 minutos
 const alertHistoryFile = path.resolve(__dirname, 'alertHistory.json');
 
-const RISK_PERCENT = 1;
-const CAPITAL = 10000;
+const RISK_PERCENT = 1; // 1% por operação
+const CAPITAL = 10000; // Capital fictício para cálculo (ajuste conforme)
 
+// --- FUNÇÕES DE CACHE DE CANDLES ---
 async function getCandlesCached(symbol, interval, limit = 100) {
   const key = `${symbol}-${interval}-${limit}`;
   const now = Date.now();
@@ -60,6 +62,7 @@ async function getCandlesCached(symbol, interval, limit = 100) {
   return candles;
 }
 
+// --- INDICADORES ---
 function calcRSI(closes, period = 14) {
   return ti.RSI.calculate({ period, values: closes });
 }
@@ -91,11 +94,7 @@ function calcADX(highs, lows, closes, period = 14) {
   return ti.ADX.calculate({ high: highs, low: lows, close: closes, period });
 }
 
-function checkSustainedCondition(arr, n, conditionFn) {
-  if (arr.length < n) return false;
-  return arr.slice(-n).every(conditionFn);
-}
-
+// --- HISTÓRICO DE ALERTAS ---
 async function loadAlertHistory() {
   try {
     const data = await fs.readFile(alertHistoryFile, 'utf-8');
@@ -109,6 +108,7 @@ async function saveAlertHistory(history) {
   await fs.writeFile(alertHistoryFile, JSON.stringify(history, null, 2));
 }
 
+// --- CÁLCULO DE STOP LOSS E TAKE PROFIT ---
 function calculateSLTP(entryPrice, atr, direction) {
   const slDistance = atr * 1.5;
   const tpDistance = atr * 3;
@@ -126,6 +126,7 @@ function calculateSLTP(entryPrice, atr, direction) {
   }
 }
 
+// --- FUNÇÃO PRINCIPAL DE ALERTAS ---
 async function checarAlertas(symbol, alertHistory) {
   const [tf5m, tf30m, tf4h, tf1d, tfAtual] = await Promise.all([
     getCandlesCached(symbol, '5m'),
@@ -157,12 +158,6 @@ async function checarAlertas(symbol, alertHistory) {
   const rsi30mArr = calcRSI(closes30m);
   const rsi5m = rsi5mArr[rsi5mArr.length - 1];
   const rsi30m = rsi30mArr[rsi30mArr.length - 1];
-
-  const rsi5mConfirmed = checkSustainedCondition(
-    rsi5mArr.slice(-3),
-    3,
-    v => v < 30
-  );
 
   const ma21_5m = calcSMA(closes5m, 21).slice(-1)[0];
   const ema50_30m = calcEMA(closes30m, 50).slice(-1)[0];
@@ -197,35 +192,44 @@ async function checarAlertas(symbol, alertHistory) {
     return precoAtual >= nivel - tolerancia && precoAtual <= nivel + tolerancia;
   }
 
+  // Cálculo do score de compra e venda (com pesos decimais)
   let scoreBuy = 0;
   let scoreSell = 0;
 
-  if (rsi5m < 30 && rsi5mConfirmed && macd30m.MACD > macd30m.signal && adx30m > 20 && volume5m > 1.2 * volume5mAvg) {
-    scoreBuy += 1;
+  // RSI
+  if (rsi5m < 35) scoreBuy += 1;
+  if (rsi5m > 65) scoreSell += 1;
+
+  // MACD 30m
+  if (macd30m.MACD > macd30m.signal) scoreBuy += 1;
+  if (macd30m.MACD < macd30m.signal) scoreSell += 1;
+
+  // ADX (peso 0.5)
+  if (adx30m > 20) {
+    scoreBuy += 0.5;
+    scoreSell += 0.5;
   }
 
-  if (rsi5m > 70 && macd30m.MACD < macd30m.signal && adx30m > 20 && volume5m > 1.2 * volume5mAvg) {
-    scoreSell += 1;
+  // Volume (peso 0.5)
+  if (volume5m > 1.1 * volume5mAvg) {
+    scoreBuy += 0.5;
+    scoreSell += 0.5;
   }
 
-  const nearSupport = estaProximo(s1) || estaProximo(s2);
-  const nearResistance = estaProximo(r1) || estaProximo(r2);
+  // Suporte / resistência (peso 0.5)
+  if (scoreBuy > 0 && (estaProximo(s1) || estaProximo(s2))) scoreBuy += 0.5;
+  if (scoreSell > 0 && (estaProximo(r1) || estaProximo(r2))) scoreSell += 0.5;
 
-  if (scoreBuy > 0 && nearSupport) scoreBuy += 1;
-  if (scoreSell > 0 && nearResistance) scoreSell += 1;
+  // Confirmação MACD 4h + EMA200 (peso 1)
+  if (macd4h.MACD > macd4h.signal && precoAtual > ema200_4h) scoreBuy += 1;
+  if (macd4h.MACD < macd4h.signal && precoAtual < ema200_4h) scoreSell += 1;
 
-  if (macd4h.MACD > macd4h.signal && precoAtual > ema200_4h) {
-    scoreBuy += 1;
-  }
-  if (macd4h.MACD < macd4h.signal && precoAtual < ema200_4h) {
-    scoreSell += 1;
-  }
+  // Debug log do score
+  console.log(`[${new Date().toLocaleTimeString()}] Score ${symbol} -> Compra: ${scoreBuy.toFixed(1)}, Venda: ${scoreSell.toFixed(1)}`);
 
-  // 🔍 Log dos scores
-  console.log(`Score ${symbol} -> Compra: ${scoreBuy}, Venda: ${scoreSell}`);
-
-  const signalBuy = scoreBuy >= 3;
-  const signalSell = scoreSell >= 3;
+  // Condição de sinal: score mínimo 2.5
+  const signalBuy = scoreBuy >= 2.5;
+  const signalSell = scoreSell >= 2.5;
 
   const lastAlert = alertHistory[symbol] || {};
   const now = Date.now();
@@ -247,8 +251,7 @@ async function checarAlertas(symbol, alertHistory) {
       `ADX30m: ${adx30m.toFixed(2)}`;
 
     await sendTelegramMessage(msg);
-
-    alertHistory[symbol] = { buy: now, sell: lastAlert.sell };
+    alertHistory[symbol] = { ...lastAlert, buy: now };
     await saveAlertHistory(alertHistory);
   }
 
@@ -260,7 +263,7 @@ async function checarAlertas(symbol, alertHistory) {
 
     const { stopLoss, takeProfit } = calculateSLTP(precoAtual, atr30m, 'sell');
 
-    const msg = `⛔ *Venda* detectada para ${symbol}!\n` +
+    const msg = `🛑 *Venda* detectada para ${symbol}!\n` +
       `Entrada: ${precoAtual.toFixed(4)}\n` +
       `Stop Loss: ${stopLoss.toFixed(4)}\n` +
       `Take Profit: ${takeProfit.toFixed(4)}\n` +
@@ -269,36 +272,23 @@ async function checarAlertas(symbol, alertHistory) {
       `ADX30m: ${adx30m.toFixed(2)}`;
 
     await sendTelegramMessage(msg);
-
-    alertHistory[symbol] = { buy: lastAlert.buy, sell: now };
+    alertHistory[symbol] = { ...lastAlert, sell: now };
     await saveAlertHistory(alertHistory);
   }
 }
 
 // --- LOOP PRINCIPAL ---
-async function loopPrincipal() {
-  const agora = new Date();
-  console.log(`\nA verificar sinais em ${agora.toLocaleString('pt-PT')}`);
-
+(async () => {
   const alertHistory = await loadAlertHistory();
 
-  for (const symbol of symbols) {
-    try {
-      await checarAlertas(symbol, alertHistory);
-      const hora = new Date().toLocaleTimeString('pt-PT');
-      console.log(`[${hora}] Verificado ${symbol}`);
-    } catch (err) {
-      console.error(`Erro ao verificar ${symbol}:`, err.message);
+  console.log('Iniciando monitoramento...');
+  setInterval(async () => {
+    for (const symbol of symbols) {
+      try {
+        await checarAlertas(symbol, alertHistory);
+      } catch (err) {
+        console.error(`Erro ao verificar ${symbol}:`, err.message);
+      }
     }
-  }
-}
-
-// --- INICIO ---
-async function main() {
-  while (true) {
-    await loopPrincipal();
-    await new Promise(resolve => setTimeout(resolve, 4 * 60 * 1000));
-  }
-}
-
-main();
+  }, 60 * 1000); // checa a cada 1 minuto
+})();
