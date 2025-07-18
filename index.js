@@ -24,7 +24,7 @@ const INTERVALS = {
 const API_URL = "https://api.binance.com/api/v3/klines";
 
 const ALERT_SCORE_THRESHOLD = 3.5;
-const ALERT_COOLDOWN = 30 * 60 * 1000; // 30 min
+const ALERT_COOLDOWN = 30 * 60 * 1000; // 30 minutos
 
 const lastAlerts = {};
 
@@ -39,11 +39,18 @@ async function fetchCandles(symbol, interval, limit = 100) {
   }));
 }
 
-function canSendAlert(symbol, tipo) {
+function canSendAlert(symbol, tipo, entry, sl, tp) {
   const now = Date.now();
   if (!lastAlerts[symbol]) lastAlerts[symbol] = {};
-  if (!lastAlerts[symbol][tipo] || now - lastAlerts[symbol][tipo] > ALERT_COOLDOWN) {
-    lastAlerts[symbol][tipo] = now;
+
+  const last = lastAlerts[symbol][tipo];
+  const changed = !last ||
+    last.entry !== entry ||
+    last.sl !== sl ||
+    last.tp !== tp;
+
+  if (changed && (!last || now - last.timestamp > ALERT_COOLDOWN)) {
+    lastAlerts[symbol][tipo] = { timestamp: now, entry, sl, tp };
     return true;
   }
   return false;
@@ -124,12 +131,24 @@ async function analyzeSymbol(symbol) {
     if (isDownTrend) scoreVenda += 1;
     if (adxStrong) scoreVenda += 1;
 
-    if (scoreCompra >= ALERT_SCORE_THRESHOLD && canSendAlert(symbol, "compra")) {
+    if (scoreCompra >= ALERT_SCORE_THRESHOLD) {
       const entry = closePrice;
-      sendTelegramAlert(symbol, "compra", entry, calculateSL(entry, lastATR), calculateTP(entry, lastATR), lastRSI, lastMACD, lastADX, scoreCompra);
-    } else if (scoreVenda >= ALERT_SCORE_THRESHOLD && canSendAlert(symbol, "venda")) {
+      const sl = calculateSL(entry, lastATR);
+      const tp = calculateTP(entry, lastATR);
+      if (canSendAlert(symbol, "compra", entry, sl, tp)) {
+        sendTelegramAlert(symbol, "compra", entry, sl, tp, lastRSI, lastMACD, lastADX, scoreCompra);
+      } else {
+        console.log(`[${symbol}] Alerta COMPRA bloqueado pelo cooldown.`);
+      }
+    } else if (scoreVenda >= ALERT_SCORE_THRESHOLD) {
       const entry = closePrice;
-      sendTelegramAlert(symbol, "venda", entry, calculateTP(entry, lastATR), calculateSL(entry, lastATR), lastRSI, lastMACD, lastADX, scoreVenda);
+      const tp = calculateSL(entry, lastATR); // invertido para venda
+      const sl = calculateTP(entry, lastATR);
+      if (canSendAlert(symbol, "venda", entry, sl, tp)) {
+        sendTelegramAlert(symbol, "venda", entry, sl, tp, lastRSI, lastMACD, lastADX, scoreVenda);
+      } else {
+        console.log(`[${symbol}] Alerta VENDA bloqueado pelo cooldown.`);
+      }
     } else {
       console.log(`[${symbol}] Nenhum sinal forte. Scores: Compra=${scoreCompra.toFixed(2)}, Venda=${scoreVenda.toFixed(2)}`);
     }
