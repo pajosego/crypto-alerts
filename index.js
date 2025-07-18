@@ -185,3 +185,6 @@ async function monitorar() {
 
 setInterval(monitorar, 10 * 60 * 1000);
 monitorar();
+
+// Mantém o processo ativo
+process.stdin.resume();
