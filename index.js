@@ -3,7 +3,6 @@ const ti = require('technicalindicators');
 const fs = require('fs').promises;
 const path = require('path');
 
-// --- CONFIGURAÇÕES ---
 const TELEGRAM_BOT_TOKEN = '7818490459:AAG-p7pp4FGVqRcFcT9QoTF8o9vVsKl_VpM';
 const TELEGRAM_CHAT_ID = '1741928134';
 
@@ -20,7 +19,6 @@ async function sendTelegramMessage(text) {
   }
 }
 
-// --- CONFIGURAÇÕES DE MONITORAMENTO ---
 const symbols = [
   'BTCUSDT', 'ETHUSDT', 'BNBUSDT', 'XRPUSDT', 'ADAUSDT',
   'SOLUSDT', 'DOGEUSDT', 'DOTUSDT', 'LTCUSDT', 'AVAXUSDT',
@@ -31,10 +29,8 @@ const candleCache = {};
 const cacheDurationMs = 4 * 60 * 1000; // 4 minutos
 const alertHistoryFile = path.resolve(__dirname, 'alertHistory.json');
 
-const RISK_PERCENT = 1; // 1% por operação
-const CAPITAL = 10000; // Capital fictício para cálculo (ajuste conforme)
+const ALERT_COOLDOWN_MS = 30 * 60 * 1000; // 30 minutos entre alertas iguais
 
-// --- FUNÇÕES DE CACHE DE CANDLES ---
 async function getCandlesCached(symbol, interval, limit = 100) {
   const key = `${symbol}-${interval}-${limit}`;
   const now = Date.now();
@@ -62,7 +58,6 @@ async function getCandlesCached(symbol, interval, limit = 100) {
   return candles;
 }
 
-// --- INDICADORES ---
 function calcRSI(closes, period = 14) {
   return ti.RSI.calculate({ period, values: closes });
 }
@@ -94,7 +89,6 @@ function calcADX(highs, lows, closes, period = 14) {
   return ti.ADX.calculate({ high: highs, low: lows, close: closes, period });
 }
 
-// --- HISTÓRICO DE ALERTAS ---
 async function loadAlertHistory() {
   try {
     const data = await fs.readFile(alertHistoryFile, 'utf-8');
@@ -108,7 +102,6 @@ async function saveAlertHistory(history) {
   await fs.writeFile(alertHistoryFile, JSON.stringify(history, null, 2));
 }
 
-// --- CÁLCULO DE STOP LOSS E TAKE PROFIT ---
 function calculateSLTP(entryPrice, atr, direction) {
   const slDistance = atr * 1.5;
   const tpDistance = atr * 3;
@@ -126,7 +119,6 @@ function calculateSLTP(entryPrice, atr, direction) {
   }
 }
 
-// --- FUNÇÃO PRINCIPAL DE ALERTAS ---
 async function checarAlertas(symbol, alertHistory) {
   const [tf5m, tf30m, tf4h, tf1d, tfAtual] = await Promise.all([
     getCandlesCached(symbol, '5m'),
@@ -155,129 +147,90 @@ async function checarAlertas(symbol, alertHistory) {
   const closeDay = ontem.close;
 
   const rsi5mArr = calcRSI(closes5m);
-  const rsi30mArr = calcRSI(closes30m);
   const rsi5m = rsi5mArr[rsi5mArr.length - 1];
-  const rsi30m = rsi30mArr[rsi30mArr.length - 1];
-
-  const ma21_5m = calcSMA(closes5m, 21).slice(-1)[0];
-  const ema50_30m = calcEMA(closes30m, 50).slice(-1)[0];
-  const ema200_4h = calcEMA(closes4h, 200).slice(-1)[0];
 
   const macd30mArr = calcMACD(closes30m);
-  const macd4hArr = calcMACD(closes4h);
   const macd30m = macd30mArr[macd30mArr.length - 1];
-  const macd4h = macd4hArr[macd4hArr.length - 1];
-
-  const volume5m = tf5m[tf5m.length - 1].volume;
-  const volume5mAvg = tf5m.slice(-10).reduce((acc, c) => acc + c.volume, 0) / 10;
-  const volume30m = tf30m[tf30m.length - 1].volume;
-
-  const bb5mArr = calcBollingerBands(closes5m);
-  const bb5m = bb5mArr[bb5mArr.length - 1];
 
   const adx30mArr = calcADX(highs30m, lows30m, closes30m);
   const adx30m = adx30mArr.length ? adx30mArr[adx30mArr.length - 1].adx : 0;
 
-  const atr30mArr = ti.ATR.calculate({ high: highs30m, low: lows30m, close: closes30m, period: 14 });
-  const atr30m = atr30mArr.length ? atr30mArr[atr30mArr.length - 1] : null;
+  const volume5m = tf5m[tf5m.length - 1].volume;
+  const volume5mAvg = tf5m.slice(-10).reduce((acc, c) => acc + c.volume, 0) / 10;
 
   const pivot = (highDay + lowDay + closeDay) / 3;
   const r1 = 2 * pivot - lowDay;
   const s1 = 2 * pivot - highDay;
-  const r2 = pivot + (highDay - lowDay);
-  const s2 = pivot - (highDay - lowDay);
 
   function estaProximo(nivel) {
     const tolerancia = nivel * 0.005;
     return precoAtual >= nivel - tolerancia && precoAtual <= nivel + tolerancia;
   }
 
-  // Cálculo do score de compra e venda (com pesos decimais)
   let scoreBuy = 0;
   let scoreSell = 0;
 
-  // RSI
   if (rsi5m < 35) scoreBuy += 1;
   if (rsi5m > 65) scoreSell += 1;
 
-  // MACD 30m
   if (macd30m.MACD > macd30m.signal) scoreBuy += 1;
   if (macd30m.MACD < macd30m.signal) scoreSell += 1;
 
-  // ADX (peso 0.5)
   if (adx30m > 20) {
     scoreBuy += 0.5;
     scoreSell += 0.5;
   }
 
-  // Volume (peso 0.5)
   if (volume5m > 1.1 * volume5mAvg) {
     scoreBuy += 0.5;
     scoreSell += 0.5;
   }
 
-  // Suporte / resistência (peso 0.5)
-  if (scoreBuy > 0 && (estaProximo(s1) || estaProximo(s2))) scoreBuy += 0.5;
-  if (scoreSell > 0 && (estaProximo(r1) || estaProximo(r2))) scoreSell += 0.5;
+  if (scoreBuy > 0 && estaProximo(s1)) scoreBuy += 0.5;
+  if (scoreSell > 0 && estaProximo(r1)) scoreSell += 0.5;
 
-  // Confirmação MACD 4h + EMA200 (peso 1)
-  if (macd4h.MACD > macd4h.signal && precoAtual > ema200_4h) scoreBuy += 1;
-  if (macd4h.MACD < macd4h.signal && precoAtual < ema200_4h) scoreSell += 1;
+  const atr30mArr = ti.ATR.calculate({ high: highs30m, low: lows30m, close: closes30m, period: 14 });
+  const atr30m = atr30mArr.length ? atr30mArr[atr30mArr.length - 1] : null;
 
-  // Debug log do score
-  console.log(`[${new Date().toLocaleTimeString()}] Score ${symbol} -> Compra: ${scoreBuy.toFixed(1)}, Venda: ${scoreSell.toFixed(1)}`);
-
-  // Condição de sinal: score mínimo 2.5
-  const signalBuy = scoreBuy >= 2.5;
-  const signalSell = scoreSell >= 2.5;
-
-  const lastAlert = alertHistory[symbol] || {};
   const now = Date.now();
+  const lastAlert = alertHistory[symbol] || {};
 
-  if (signalBuy && (!lastAlert.buy || now - lastAlert.buy > 15 * 60 * 1000)) {
-    if (!atr30m) {
-      console.log(`Sem ATR para calcular SL/TP de COMPRA em ${symbol}`);
-      return;
+  // Debug alert times
+  console.log(`${symbol} - Últimos alertas: buy=${lastAlert.buy}, sell=${lastAlert.sell}`);
+
+  if (scoreBuy >= 2.5) {
+    if (!lastAlert.buy || (now - lastAlert.buy) > ALERT_COOLDOWN_MS) {
+      if (!atr30m) {
+        console.log(`Sem ATR para SL/TP compra em ${symbol}`);
+        return;
+      }
+      const { stopLoss, takeProfit } = calculateSLTP(precoAtual, atr30m, 'buy');
+      const msg = `🚀 *Compra* detectada para ${symbol}!\nEntrada: ${precoAtual.toFixed(4)}\nStop Loss: ${stopLoss.toFixed(4)}\nTake Profit: ${takeProfit.toFixed(4)}\nRSI5m: ${rsi5m.toFixed(2)}\nMACD30m: ${macd30m.MACD.toFixed(4)} > ${macd30m.signal.toFixed(4)}\nADX30m: ${adx30m.toFixed(2)}`;
+      await sendTelegramMessage(msg);
+      alertHistory[symbol].buy = now;
+      await saveAlertHistory(alertHistory);
+    } else {
+      console.log(`Alerta de compra para ${symbol} ignorado por cooldown.`);
     }
-
-    const { stopLoss, takeProfit } = calculateSLTP(precoAtual, atr30m, 'buy');
-
-    const msg = `🚀 *Compra* detectada para ${symbol}!\n` +
-      `Entrada: ${precoAtual.toFixed(4)}\n` +
-      `Stop Loss: ${stopLoss.toFixed(4)}\n` +
-      `Take Profit: ${takeProfit.toFixed(4)}\n` +
-      `RSI5m: ${rsi5m.toFixed(2)}\n` +
-      `MACD30m: ${macd30m.MACD.toFixed(4)} > ${macd30m.signal.toFixed(4)}\n` +
-      `ADX30m: ${adx30m.toFixed(2)}`;
-
-    await sendTelegramMessage(msg);
-    alertHistory[symbol] = { ...lastAlert, buy: now };
-    await saveAlertHistory(alertHistory);
   }
 
-  if (signalSell && (!lastAlert.sell || now - lastAlert.sell > 15 * 60 * 1000)) {
-    if (!atr30m) {
-      console.log(`Sem ATR para calcular SL/TP de VENDA em ${symbol}`);
-      return;
+  if (scoreSell >= 2.5) {
+    if (!lastAlert.sell || (now - lastAlert.sell) > ALERT_COOLDOWN_MS) {
+      if (!atr30m) {
+        console.log(`Sem ATR para SL/TP venda em ${symbol}`);
+        return;
+      }
+      const { stopLoss, takeProfit } = calculateSLTP(precoAtual, atr30m, 'sell');
+      const msg = `🛑 *Venda* detectada para ${symbol}!\nEntrada: ${precoAtual.toFixed(4)}\nStop Loss: ${stopLoss.toFixed(4)}\nTake Profit: ${takeProfit.toFixed(4)}\nRSI5m: ${rsi5m.toFixed(2)}\nMACD30m: ${macd30m.MACD.toFixed(4)} < ${macd30m.signal.toFixed(4)}\nADX30m: ${adx30m.toFixed(2)}`;
+      await sendTelegramMessage(msg);
+      alertHistory[symbol].sell = now;
+      await saveAlertHistory(alertHistory);
+    } else {
+      console.log(`Alerta de venda para ${symbol} ignorado por cooldown.`);
     }
-
-    const { stopLoss, takeProfit } = calculateSLTP(precoAtual, atr30m, 'sell');
-
-    const msg = `🛑 *Venda* detectada para ${symbol}!\n` +
-      `Entrada: ${precoAtual.toFixed(4)}\n` +
-      `Stop Loss: ${stopLoss.toFixed(4)}\n` +
-      `Take Profit: ${takeProfit.toFixed(4)}\n` +
-      `RSI5m: ${rsi5m.toFixed(2)}\n` +
-      `MACD30m: ${macd30m.MACD.toFixed(4)} < ${macd30m.signal.toFixed(4)}\n` +
-      `ADX30m: ${adx30m.toFixed(2)}`;
-
-    await sendTelegramMessage(msg);
-    alertHistory[symbol] = { ...lastAlert, sell: now };
-    await saveAlertHistory(alertHistory);
   }
 }
 
-// --- LOOP PRINCIPAL ---
 (async () => {
   const alertHistory = await loadAlertHistory();
 
@@ -290,5 +243,5 @@ async function checarAlertas(symbol, alertHistory) {
         console.error(`Erro ao verificar ${symbol}:`, err.message);
       }
     }
-  }, 60 * 1000); // checa a cada 1 minuto
+  }, 60 * 1000);
 })();
