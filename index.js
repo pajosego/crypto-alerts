@@ -1,10 +1,16 @@
-// index.js
+require('dotenv').config();
 const axios = require("axios");
 const { RSI, MACD, ADX, EMA, ATR } = require("technicalindicators");
 const TelegramBot = require("node-telegram-bot-api");
 
-const TELEGRAM_TOKEN = "7818490459:AAG-p7pp4FGVqRcFcT9QoTF8o9vVsKl_VpM";
-const CHAT_ID = "1741928134";
+const TELEGRAM_TOKEN = process.env.TELEGRAM_TOKEN;
+const CHAT_ID = process.env.CHAT_ID;
+
+if (!TELEGRAM_TOKEN || !CHAT_ID) {
+  console.error("⚠️  Erro: As variáveis TELEGRAM_TOKEN e CHAT_ID precisam estar definidas no .env");
+  process.exit(1);
+}
+
 const bot = new TelegramBot(TELEGRAM_TOKEN, { polling: false });
 
 const SYMBOLS = [
@@ -24,19 +30,24 @@ const INTERVALS = {
 const API_URL = "https://api.binance.com/api/v3/klines";
 
 const ALERT_SCORE_THRESHOLD = 3.5;
-const ALERT_COOLDOWN = 30 * 60 * 1000; // 30 min cooldown por símbolo e tipo
+const ALERT_COOLDOWN = 30 * 60 * 1000; // 30 minutos cooldown
 
-const lastAlerts = {}; // Evitar spam: { SYMBOL: { compra: timestamp, venda: timestamp } }
+const lastAlerts = {}; // Para evitar spam: { SYMBOL: { compra: timestamp, venda: timestamp } }
 
 async function fetchCandlesFull(symbol, interval, limit = 100) {
-  const url = `${API_URL}?symbol=${symbol}&interval=${interval}&limit=${limit}`;
-  const res = await axios.get(url);
-  return res.data.map(c => ({
-    open: parseFloat(c[1]),
-    high: parseFloat(c[2]),
-    low: parseFloat(c[3]),
-    close: parseFloat(c[4])
-  }));
+  try {
+    const url = `${API_URL}?symbol=${symbol}&interval=${interval}&limit=${limit}`;
+    const res = await axios.get(url);
+    return res.data.map(c => ({
+      open: parseFloat(c[1]),
+      high: parseFloat(c[2]),
+      low: parseFloat(c[3]),
+      close: parseFloat(c[4])
+    }));
+  } catch (error) {
+    console.error(`Erro ao buscar candles para ${symbol} (${interval}):`, error.message);
+    throw error;
+  }
 }
 
 function canSendAlert(symbol, tipo) {
@@ -166,5 +177,5 @@ async function monitorar() {
   console.log("Monitoramento concluído.");
 }
 
-setInterval(monitorar, 10 * 60 * 1000); // A cada 10 minutos
+setInterval(monitorar, 10 * 60 * 1000); // Executa a cada 10 minutos
 monitorar();
